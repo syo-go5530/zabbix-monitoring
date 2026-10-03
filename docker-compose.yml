@@ -1,0 +1,90 @@
+version: "3.8"
+
+services:
+  # ---- データベース(Zabbixの監視データ・設定を保存する) ----
+  mysql-server:
+    image: mysql:8.0
+    container_name: zbx-mysql
+    restart: unless-stopped
+    command:
+      - mysqld
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_bin
+      - --default-authentication-plugin=mysql_native_password
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # ---- Zabbix Server(監視データの収集・トリガー評価・アラート発行) ----
+  zabbix-server:
+    image: zabbix/zabbix-server-mysql:6.4-alpine-latest
+    container_name: zbx-server
+    restart: unless-stopped
+    environment:
+      DB_SERVER_HOST: mysql-server
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      ZBX_TIMEOUT: "10"
+    ports:
+      - "10051:10051"
+    volumes:
+      - zabbix-server-data:/var/lib/zabbix
+    depends_on:
+      mysql-server:
+        condition: service_healthy
+
+  # ---- Zabbix Web UI(ブラウザで見るダッシュボード) ----
+  zabbix-web:
+    image: zabbix/zabbix-web-nginx-mysql:6.4-alpine-latest
+    container_name: zbx-web
+    restart: unless-stopped
+    environment:
+      ZBX_SERVER_HOST: zabbix-server
+      DB_SERVER_HOST: mysql-server
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      PHP_TZ: ${PHP_TZ}
+    ports:
+      - "${ZABBIX_WEB_PORT}:8080" # http://localhost:8080 でアクセス
+    depends_on:
+      - zabbix-server
+      - mysql-server
+
+  # ---- Zabbix Agent(監視対象=このDockerホスト自身にデータを送らせる) ----
+  zabbix-agent:
+    image: zabbix/zabbix-agent:6.4-alpine-latest
+    container_name: zbx-agent
+    restart: unless-stopped
+    environment:
+      ZBX_SERVER_HOST: zabbix-server
+      ZBX_HOSTNAME: docker-host-01
+      ZBX_TIMEOUT: "10"
+    volumes:
+      - ./custom-agent/userparameter_nginx.conf:/etc/zabbix/zabbix_agentd.d/userparameter_nginx.conf:ro
+    depends_on:
+      - zabbix-server
+
+  # ---- 監視対象のサンプル:nginx(あとでZabbixに監視ホストとして追加する) ----
+  sample-nginx:
+    image: nginx:alpine
+    container_name: zbx-sample-nginx
+    restart: unless-stopped
+    ports:
+      - "8081:80"
+
+volumes:
+  mysql-data:
+  zabbix-server-data:

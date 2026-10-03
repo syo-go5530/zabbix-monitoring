@@ -1,0 +1,5 @@
+# 実際のパスワードを入れた.envはGitに含めない
+.env
+
+# Docker Composeが作るデータ
+*.log
